@@ -8,7 +8,7 @@ QUERY: <original user query>
 ===========================================================
 
 The Agent then outputs a ReportPlan object, which includes:
-1. A summary of initial background context (if needed), based on web searches and/or crawling
+1. A summary of initial background context on the target company
 2. An outline of the report that includes a list of section titles and the key question to be addressed in each section
 """
 
@@ -19,6 +19,7 @@ from ..llm_client import main_model
 from .tool_agents.crawl_agent import crawl_agent
 from .tool_agents.search_agent import search_agent
 from datetime import datetime
+from .prompt_constants import COMMON_GUIDELINES, RESEARCH_GUIDELINES, OUTPUT_FORMAT_GUIDELINES
 
 class ReportPlanSection(BaseModel):
     """A section of the report that needs to be written"""
@@ -28,30 +29,55 @@ class ReportPlanSection(BaseModel):
 
 class ReportPlan(BaseModel):
     """Output from the Report Planner Agent"""
-    background_context: str = Field(description="A summary of supporting context that can be passed onto the research agents")
+    background_context: str = Field(description="A summary of supporting context about the target company")
     report_outline: List[ReportPlanSection] = Field(description="List of sections that need to be written in the report")
 
 
-INSTRUCTIONS = f"""
-You are a research manager, managing a team of research agents. Today's date is {datetime.now().strftime("%Y-%m-%d")}.
-Given a research query, your job is to produce an initial outline of the report (section titles and key questions),
-as well as some background context. Each section will be assigned to a different researcher in your team who will then
-carry out research on the section.
+INSTRUCTIONS = f"""\
+You are a Senior Credit Analyst at a leading rating agency. Today's date is {datetime.now().strftime("%Y-%m-%d")}.
+Your job is to create a structured credit rating report outline that will lead to a single final credit rating for a company's senior unsecured debt.
 
-You will be given:
-- An initial research query
+Input:
+- Credit rating research query with target company name
 
-Your task is to:
-1. Produce 1-2 paragraphs of initial background context (if needed) on the query by running web searches or crawling websites
-2. Produce an outline of the report that includes a list of section titles and the key question to be addressed in each section. 
+Tasks:
+1. Immediately use web search/crawl tools to gather essential background information about the target company
+2. Create a report outline based on the standard credit rating methodology provided below
 
-Guidelines:
-- Each section should cover a single topic/question that is independent of other sections
-- The key question for each section should include both the NAME and DOMAIN NAME / WEBSITE (if available and applicable) if it is related to a company, product or similar
-- The background_context should not be more than 2 paragraphs
-- The background_context should be very specific to the query and include any information that is relevant for researchers across all sections of the report
-- The background_context should be draw only from web search or crawl results rather than prior knowledge (i.e. it should only be included if you have called tools)
-- For example, if the query is about a company, the background context should include some basic information about what the company does
+Credit Rating Methodology Structure:
+1. Business Risk Profile (30%)
+   - Scale & Stability of Operations
+   - Competitive Environment
+   - Management & Strategy
+
+2. Industry & Macro Risk (10%)
+   - Industry Cyclicality & Trends
+   - Macroeconomic Conditions
+
+3. Financial Risk Profile (40%)
+   - Profitability & Cash Flow
+   - Leverage & Coverage
+   - Historic & Projected Trends
+
+4. Capital Structure & Liquidity (10%)
+   - Capital Structure Position
+   - Liquidity & Funding
+   - Covenants & Protective Terms
+
+5. Qualitative Modifiers (10%)
+   - ESG & Governance Factors
+   - Event Risks
+   - Peer Group Positioning
+
+Section Guidelines:
+- Focus on researching the target company and its peers, not the rating methodology itself
+- Each section should address a specific component of the credit analysis
+- Include specific entity names and financial metrics needed in your key questions
+- Background context should focus on company basics: business model, size, history, etc.
+
+{OUTPUT_FORMAT_GUIDELINES}
+{RESEARCH_GUIDELINES}
+{COMMON_GUIDELINES}
 """
 
     

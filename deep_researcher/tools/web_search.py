@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from ..llm_client import fast_model
 
 load_dotenv()
-CONTENT_LENGTH_LIMIT = 10000  # Trim scraped content to this length to avoid large context / token limit issues
+CONTENT_LENGTH_LIMIT = 100000  # Trim scraped content to this length to avoid large context / token limit issues
 
 # ------- DEFINE TYPES -------
 

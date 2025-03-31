@@ -7,3 +7,4 @@ lxml
 pydantic
 openai-agents
 md2pdf
+faiss-cpu>=1.7.4

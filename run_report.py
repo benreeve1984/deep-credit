@@ -13,7 +13,7 @@ from deep_researcher import DeepResearcher, IterativeResearcher
 # Configuration parameters
 CONFIG = {
     # Common parameters
-    "max_time_minutes": 15,  # Increased for more thorough analysis
+    "max_time_minutes": 30,  # Increased for more thorough analysis
     "verbose": True,
     "tracing": True,
     
@@ -21,49 +21,29 @@ CONFIG = {
     "default_mode": "deep",  # Set to "deep" or "iterative"
     
     # Deep research specific
-    "deep_max_iterations": 5,  # Increased for more thorough analysis
+    "deep_max_iterations": 8,  # Increased for more thorough analysis
     
     # Iterative research specific
-    "iterative_max_iterations": 5,
-    "output_length": "10 pages",  # Increased for comprehensive report
-    "output_instructions": "",
+    "iterative_max_iterations": 8,
+    "output_length": "comprehensive (at least 10 pages)",  # Increased for detailed report
+    "output_instructions": "Provide detailed financial analysis with specific metrics and values. Use full paragraphs rather than bullet points.",
     
     # Company to analyze
     "company_name": "Trafigura Group Pte. Ltd.",  # Hard coded company name
     
     # Default query template
-    "query_template": '''You are a Deep Research agentic LLM with extensive expertise in credit rating methodologies. Your objective is to produce a single, final credit rating for {company_name}, specifically covering its senior unsecured long-term debt instruments (e.g., bonds or notes issued without collateral), using only publicly accessible data and best practice frameworks from recognized rating agencies (e.g., Moody's, S&P, Fitch). Follow these steps to arrive at your final rating:
+    "query_template": '''Prepare a comprehensive, detailed credit rating report (minimum 10 pages) for {company_name}'s senior unsecured long-term debt. 
 
-1. Outline Methodology & Rationale
-   • Summarize standard credit-rating methodologies from major agencies, emphasizing factors such as macroeconomic conditions, industry outlook, financial performance, capital structure, liquidity, and corporate governance.
-   • Describe how each factor influences the credit rating process for senior unsecured debt.
+The final report must include:
+1. A single, final letter-grade credit rating (e.g., AAA, AA+, BBB-, Ba1)
+2. A rating outlook (Stable, Positive, or Negative)
+3. Thorough analysis based on publicly available information
+4. Specific financial metrics with actual values
+5. Multi-year trends and comparative analysis
+6. Peer company comparisons
+7. Clear explanation of the rating rationale
 
-2. Data Gathering & Analysis
-   • Identify and compile all relevant data from freely available sources (e.g., annual reports, reputable news outlets, financial aggregators).
-   • List these data sources, specifying the key information each provides (e.g., financial ratios, revenue growth, debt levels).
-   • Calculate or reference important financial metrics (e.g., debt-to-EBITDA, interest coverage, profitability) based on the public data gathered.
-
-3. Risk & Creditworthiness Assessment
-   • Evaluate business risk factors (e.g., competitive dynamics, regulatory environment, market trends).
-   • Assess financial risk by examining leverage, cash flow stability, and liquidity management.
-   • Integrate qualitative considerations (e.g., management track record, corporate governance).
-   • Where possible, compare metrics to industry peers to contextualize risk.
-
-4. Information Gaps & Confidence
-   • Explicitly note any material data you could not obtain (e.g., recent financial statements, insider commentary).
-   • Discuss how these gaps might impact the precision of your analysis.
-   • Assign and explain your level of confidence (high/medium/low) in the final assessment, given these limitations.
-
-5. Arrive at a Single Credit Rating
-   • Based on your analysis, assign one final rating (e.g., AAA, AA, A, BBB, etc.) specifically for the senior unsecured long-term debt.
-   • Justify this rating by referencing the major strengths, weaknesses, and any external factors.
-
-6. Detailed Written Report
-   • Present a structured credit rating report incorporating your methodology, data findings, and rationale.
-   • Highlight both quantitative and qualitative reasoning.
-   • Conclude with a clear statement of the single, final rating for the senior unsecured long-term debt instruments and clarify the confidence level in your conclusion.
-
-Ensure your report is self-contained, thoroughly explaining how you arrived at your final rating based on publicly available information.''',
+Focus directly on analyzing {company_name} rather than explaining rating methodologies.''',
             
     # Output settings
     "output_dir": "credit_ratings"  # Changed directory name
@@ -157,7 +137,7 @@ def main():
     parser.add_argument('--mode', choices=['deep', 'iterative'], default=CONFIG['default_mode'],
                       help='Research mode to use (default: from CONFIG)')
     parser.add_argument('--max-time', type=int, default=CONFIG['max_time_minutes'],
-                      help='Maximum time in minutes (default: 15)')
+                      help='Maximum time in minutes (default: 30)')
     parser.add_argument('--verbose', action='store_true', default=CONFIG['verbose'],
                       help='Enable verbose output')
     parser.add_argument('--tracing', action='store_true', default=CONFIG['tracing'],

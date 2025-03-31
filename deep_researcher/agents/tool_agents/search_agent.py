@@ -18,11 +18,15 @@ import os
 from agents import Agent, WebSearchTool
 from ...tools import web_search
 from ...llm_client import fast_model
+from ...memory import MemoryManager
 from dotenv import load_dotenv
 from . import ToolAgentOutput
 
 load_dotenv()
 SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "serper").lower()
+
+# Initialize memory manager
+memory_manager = MemoryManager()
 
 INSTRUCTIONS = """You are a research assistant. Given an AgentTask, follow these steps:
 
@@ -36,6 +40,21 @@ INSTRUCTIONS = """You are a research assistant. Given an AgentTask, follow these
 * Include citations/URLs in brackets next to all associated information in your summary
 * Do not make additional searches
 """
+
+def store_search_results(summary: str, query: str, urls: list[str]):
+    """Store search results in the memory manager."""
+    metadata = {
+        'text': summary,
+        'type': 'web_search',
+        'query': query,
+        'urls': urls,
+        'source': 'web_search_agent'
+    }
+    return memory_manager.store_chunk(summary, metadata)
+
+def get_relevant_search_results(query: str, k: int = 3) -> list[tuple[str, dict]]:
+    """Retrieve relevant search results from memory."""
+    return memory_manager.query_chunks(query, k)
 
 if SEARCH_PROVIDER == "openai":
     web_search_tool = WebSearchTool()

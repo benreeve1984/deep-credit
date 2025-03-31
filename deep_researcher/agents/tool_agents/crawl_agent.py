@@ -14,7 +14,11 @@ from agents import Agent
 from ...tools import crawl_website
 from . import ToolAgentOutput
 from ...llm_client import fast_model
+from ...memory import MemoryManager
 
+
+# Initialize memory manager
+memory_manager = MemoryManager()
 
 INSTRUCTIONS = """
 You are a web craling agent that crawls the contents of a website answers a query based on the crawled contents. Follow these steps exactly:
@@ -29,9 +33,24 @@ You are a web craling agent that crawls the contents of a website answers a quer
 * Only run the crawler once
 """
 
+def store_crawl_results(summary: str, url: str, crawled_urls: list[str]):
+    """Store crawled results in the memory manager."""
+    metadata = {
+        'text': summary,
+        'type': 'web_crawl',
+        'source_url': url,
+        'crawled_urls': crawled_urls,
+        'source': 'crawl_agent'
+    }
+    return memory_manager.store_chunk(summary, metadata)
+
+def get_relevant_crawl_results(query: str, k: int = 3) -> list[tuple[str, dict]]:
+    """Retrieve relevant crawled content from memory."""
+    return memory_manager.query_chunks(query, k)
+
 crawl_agent = Agent(
     name="SiteCrawlerAgent",
-    instructions="You are a site crawler agent that crawls a website and returns the results. ",
+    instructions=INSTRUCTIONS,
     tools=[crawl_website],
     model=fast_model,
     output_type=ToolAgentOutput,

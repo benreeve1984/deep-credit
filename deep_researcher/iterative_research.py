@@ -138,6 +138,7 @@ class IterativeResearcher:
         self.verbose: bool = verbose
         self.tracing: bool = tracing
         self.last_api_call_time: float = 0
+        self.latest_evaluation = None
         
         if not self.tracing:
             from agents import set_tracing_disabled
@@ -202,8 +203,11 @@ class IterativeResearcher:
             # 2. Evaluate current gaps in the research
             evaluation: KnowledgeGapOutput = await self._evaluate_gaps(query, background_context=background_context)
             
+            # Store the latest evaluation for tracking gap priorities and previous attempts
+            self.latest_evaluation = evaluation
+            
             # Check if we should continue or break the loop
-            if not evaluation.research_complete:
+            if not evaluation.research_complete and evaluation.outstanding_gaps:
                 next_gap = evaluation.outstanding_gaps[0]
 
                 # 3. Select agents to address knowledge gap
@@ -211,6 +215,12 @@ class IterativeResearcher:
 
                 # 4. Run the selected agents to gather information
                 results: Dict[str, ToolAgentOutput] = await self._execute_tools(selection_plan.tasks)
+                
+                # Mark the gap as previously attempted for the next iteration
+                if hasattr(self, 'latest_evaluation') and self.latest_evaluation:
+                    for i, gap in enumerate(self.latest_evaluation.outstanding_gaps):
+                        if i < len(self.latest_evaluation.previously_attempted):
+                            self.latest_evaluation.previously_attempted[i] = True
             else:
                 self.should_continue = False
                 self._log_message("=== IterativeResearcher Marked As Complete - Finalizing Output ===")
@@ -268,10 +278,14 @@ class IterativeResearcher:
         
         evaluation = result.final_output_as(KnowledgeGapOutput)
 
-        if not evaluation.research_complete:
+        if not evaluation.research_complete and evaluation.outstanding_gaps:
             next_gap = evaluation.outstanding_gaps[0]
+            next_gap_priority = evaluation.gap_priorities[0] if evaluation.gap_priorities and len(evaluation.gap_priorities) > 0 else 1
+            next_gap_attempted = evaluation.previously_attempted[0] if evaluation.previously_attempted and len(evaluation.previously_attempted) > 0 else False
+            
             self.conversation.set_latest_gap(next_gap)
             self._log_message(self.conversation.latest_task_string())
+            self._log_message(f"<gap_info>\nGap Priority: {next_gap_priority}/5 | Previously Attempted: {next_gap_attempted}\n</gap_info>")
         
         return evaluation
     
@@ -282,12 +296,39 @@ class IterativeResearcher:
         background_context: str = ""
     ) -> AgentSelectionPlan:
         """Select agents to address the identified knowledge gap."""
+        # Check if this gap exists in previous evaluations to determine if it's been attempted
+        gap_previously_attempted = False
+        gap_priority = 1
+        
+        # Get the latest evaluation if available
+        if hasattr(self, 'latest_evaluation') and self.latest_evaluation:
+            if hasattr(self.latest_evaluation, 'outstanding_gaps'):
+                # Find the gap index
+                if gap in self.latest_evaluation.outstanding_gaps:
+                    gap_index = self.latest_evaluation.outstanding_gaps.index(gap)
+                    # Check if it was previously attempted
+                    if (hasattr(self.latest_evaluation, 'previously_attempted') and 
+                        self.latest_evaluation.previously_attempted and 
+                        len(self.latest_evaluation.previously_attempted) > gap_index):
+                        gap_previously_attempted = self.latest_evaluation.previously_attempted[gap_index]
+                    # Get its priority
+                    if (hasattr(self.latest_evaluation, 'gap_priorities') and 
+                        self.latest_evaluation.gap_priorities and 
+                        len(self.latest_evaluation.gap_priorities) > gap_index):
+                        gap_priority = self.latest_evaluation.gap_priorities[gap_index]
+        
         input_str = f"""
         ORIGINAL QUERY:
         {query}
 
         KNOWLEDGE GAP TO ADDRESS:
         {gap}
+        
+        GAP PRIORITY:
+        {gap_priority}
+        
+        PREVIOUSLY ATTEMPTED:
+        {gap_previously_attempted}
 
         {f"BACKGROUND CONTEXT:{chr(10)}{background_context}" if background_context else ""}
 
