@@ -28,8 +28,8 @@ class KnowledgeGapOutput(BaseModel):
     """Output from the Knowledge Gap Agent"""
     research_complete: bool = Field(description="Whether the research and findings are complete enough to end the research loop")
     outstanding_gaps: List[str] = Field(description="List of knowledge gaps that still need to be addressed")
-    gap_priorities: List[int] = Field(description="Priority levels for each gap (1=highest, 5=lowest)", default=[1, 1, 1, 1, 1])
-    previously_attempted: List[bool] = Field(description="Whether each gap has been attempted in previous iterations", default=[False, False, False, False, False])
+    gap_priorities: List[int] = Field(description="Priority levels for each gap (1=highest, 5=lowest)")
+    previously_attempted: List[bool] = Field(description="Whether each gap has been attempted in previous iterations")
 
 
 CREDIT_RATING_REQUIRED_ELEMENTS = """\
@@ -103,6 +103,10 @@ Output Format:
 - outstanding_gaps: List[str] - List of knowledge gaps to address
 - gap_priorities: List[int] - Priority level for each gap (1=highest, 5=lowest)
 - previously_attempted: List[bool] - Whether each gap has been attempted before
+
+IMPORTANT: You MUST ALWAYS include values for gap_priorities and previously_attempted, with one value for each gap in outstanding_gaps. 
+For gap_priorities, use 1 for high priority items and 5 for low priority. For previously_attempted, check the previous evaluation to see 
+which gaps have been attempted before and mark them as true, otherwise use false for newly identified gaps.
 
 {CREDIT_RATING_REQUIRED_ELEMENTS}
 {QUALITY_GUIDELINES}

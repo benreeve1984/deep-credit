@@ -8,6 +8,7 @@ from .agents.knowledge_gap_agent import KnowledgeGapOutput, knowledge_gap_agent
 from .agents.tool_selector_agent import AgentTask, AgentSelectionPlan, tool_selector_agent
 from .agents.thinking_agent import thinking_agent
 from .agents.tool_agents import TOOL_AGENTS, ToolAgentOutput
+from .logger import DeepCreditLogger
 from pydantic import BaseModel, Field
 import random
 
@@ -127,7 +128,9 @@ class IterativeResearcher:
         max_iterations: int = 5,
         max_time_minutes: int = 10,
         verbose: bool = True,
-        tracing: bool = False
+        tracing: bool = False,
+        logger: Optional[DeepCreditLogger] = None,
+        company_name: str = "Unknown Company"
     ):
         self.max_iterations: int = max_iterations
         self.max_time_minutes: int = max_time_minutes
@@ -139,6 +142,12 @@ class IterativeResearcher:
         self.tracing: bool = tracing
         self.last_api_call_time: float = 0
         self.latest_evaluation = None
+        
+        # Set up logger if not provided
+        if logger is None and verbose:
+            self.logger = DeepCreditLogger(company_name=company_name, mode="iterative")
+        else:
+            self.logger = logger
         
         if not self.tracing:
             from agents import set_tracing_disabled
@@ -159,11 +168,16 @@ class IterativeResearcher:
         for attempt in range(MAX_RETRIES):
             try:
                 await self._rate_limit_delay()
+                if self.logger:
+                    self.logger.api_call()
                 return await func(*args, **kwargs)
             except Exception as e:
                 if "rate_limit_exceeded" in str(e):
                     if attempt < MAX_RETRIES - 1:
-                        self._log_message(f"Rate limit hit, retrying in {retry_delay} seconds...")
+                        if self.logger:
+                            self.logger.warning(f"Rate limit hit, retrying in {retry_delay} seconds...")
+                        else:
+                            print(f"Rate limit hit, retrying in {retry_delay} seconds...")
                         await asyncio.sleep(retry_delay)
                         retry_delay *= 2  # Exponential backoff
                     else:
@@ -184,15 +198,31 @@ class IterativeResearcher:
         if self.tracing:
             trace_id = gen_trace_id()
             workflow_trace = trace("iterative_researcher", trace_id=trace_id)
-            print(f"View trace: https://platform.openai.com/traces/{trace_id}")
+            if self.logger:
+                self.logger.detail(f"Trace ID: {trace_id}")
+                self.logger.high_level(f"View trace: https://platform.openai.com/traces/{trace_id}")
+            else:
+                print(f"View trace: https://platform.openai.com/traces/{trace_id}")
             workflow_trace.start(mark_as_current=True)
 
-        self._log_message("=== Starting Iterative Research Workflow ===")
+        if self.logger:
+            self.logger.section_break("Starting Iterative Research Workflow")
+            self.logger.detail(f"Query: {query}")
+            if background_context:
+                self.logger.detail(f"Background Context: {background_context}")
+            self.logger.detail(f"Max iterations: {self.max_iterations}")
+            self.logger.detail(f"Max time: {self.max_time_minutes} minutes")
+        else:
+            print("=== Starting Iterative Research Workflow ===")
         
         # Iterative research loop
         while self.should_continue and self._check_constraints():
             self.iteration += 1
-            self._log_message(f"\n=== Starting Iteration {self.iteration} ===")
+            
+            if self.logger:
+                self.logger.iteration_start(self.iteration, self.max_iterations)
+            else:
+                print(f"\n=== Starting Iteration {self.iteration} ===")
 
             # Set up blank IterationData for this iteration
             self.conversation.add_iteration()
@@ -207,7 +237,11 @@ class IterativeResearcher:
             self.latest_evaluation = evaluation
             
             # Check if we should continue or break the loop
-            if not evaluation.research_complete and evaluation.outstanding_gaps:
+            if (not evaluation.research_complete and 
+                hasattr(evaluation, 'outstanding_gaps') and 
+                evaluation.outstanding_gaps and 
+                len(evaluation.outstanding_gaps) > 0):
+                
                 next_gap = evaluation.outstanding_gaps[0]
 
                 # 3. Select agents to address knowledge gap
@@ -217,19 +251,52 @@ class IterativeResearcher:
                 results: Dict[str, ToolAgentOutput] = await self._execute_tools(selection_plan.tasks)
                 
                 # Mark the gap as previously attempted for the next iteration
-                if hasattr(self, 'latest_evaluation') and self.latest_evaluation:
-                    for i, gap in enumerate(self.latest_evaluation.outstanding_gaps):
-                        if i < len(self.latest_evaluation.previously_attempted):
-                            self.latest_evaluation.previously_attempted[i] = True
+                if hasattr(self, 'latest_evaluation') and self.latest_evaluation and hasattr(self.latest_evaluation, 'outstanding_gaps'):
+                    gap_index = 0  # Default to first gap
+                    if next_gap in self.latest_evaluation.outstanding_gaps:
+                        gap_index = self.latest_evaluation.outstanding_gaps.index(next_gap)
+                        
+                    # Ensure the previously_attempted list is properly initialized
+                    if not hasattr(self.latest_evaluation, 'previously_attempted') or not self.latest_evaluation.previously_attempted:
+                        self.latest_evaluation.previously_attempted = [False] * len(self.latest_evaluation.outstanding_gaps)
+                    
+                    # Make sure the previously_attempted list has enough elements
+                    while len(self.latest_evaluation.previously_attempted) <= gap_index:
+                        self.latest_evaluation.previously_attempted.append(False)
+                    
+                    # Ensure the gap_priorities list is properly initialized
+                    if not hasattr(self.latest_evaluation, 'gap_priorities') or not self.latest_evaluation.gap_priorities:
+                        self.latest_evaluation.gap_priorities = [1] * len(self.latest_evaluation.outstanding_gaps)
+                    
+                    # Make sure the gap_priorities list has enough elements
+                    while len(self.latest_evaluation.gap_priorities) <= gap_index:
+                        self.latest_evaluation.gap_priorities.append(1)
+                    
+                    # Mark the current gap as attempted
+                    self.latest_evaluation.previously_attempted[gap_index] = True
+                
+                if self.logger:
+                    self.logger.iteration_finish(self.iteration)
             else:
                 self.should_continue = False
-                self._log_message("=== IterativeResearcher Marked As Complete - Finalizing Output ===")
+                if self.logger:
+                    self.logger.section_break("Research Complete - Finalizing Output")
+                else:
+                    print("=== IterativeResearcher Marked As Complete - Finalizing Output ===")
         
         # Create final report
+        if self.logger:
+            self.logger.section_break("Creating Final Report")
+        
         report = await self._create_final_report(query, length=output_length, instructions=output_instructions)
         
-        elapsed_time = time.time() - self.start_time
-        self._log_message(f"IterativeResearcher completed in {int(elapsed_time // 60)} minutes and {int(elapsed_time % 60)} seconds after {self.iteration} iterations.")
+        elapsed_time = int(time.time() - self.start_time)
+        if self.logger:
+            self.logger.research_complete(self.iteration, elapsed_time)
+        else:
+            minutes = elapsed_time // 60
+            seconds = elapsed_time % 60
+            print(f"IterativeResearcher completed in {minutes} minutes and {seconds} seconds after {self.iteration} iterations.")
         
         if self.tracing:
             workflow_trace.finish(reset_current=True)
@@ -239,14 +306,24 @@ class IterativeResearcher:
     def _check_constraints(self) -> bool:
         """Check if we've exceeded our constraints (max iterations or time)."""
         if self.iteration >= self.max_iterations:
-            self._log_message("\n=== Ending Research Loop ===")
-            self._log_message(f"Reached maximum iterations ({self.max_iterations})")
+            if self.logger:
+                self.logger.section_break("Ending Research Loop")
+                self.logger.high_level(f"Reached maximum iterations ({self.max_iterations})")
+                self.logger.detail(f"Reached maximum iterations limit of {self.max_iterations}")
+            else:
+                print("\n=== Ending Research Loop ===")
+                print(f"Reached maximum iterations ({self.max_iterations})")
             return False
         
         elapsed_minutes = (time.time() - self.start_time) / 60
         if elapsed_minutes >= self.max_time_minutes:
-            self._log_message("\n=== Ending Research Loop ===")
-            self._log_message(f"Reached maximum time ({self.max_time_minutes} minutes)")
+            if self.logger:
+                self.logger.section_break("Ending Research Loop")
+                self.logger.high_level(f"Reached maximum time ({self.max_time_minutes} minutes)")
+                self.logger.detail(f"Reached maximum time limit of {self.max_time_minutes} minutes")
+            else:
+                print("\n=== Ending Research Loop ===")
+                print(f"Reached maximum time ({self.max_time_minutes} minutes)")
             return False
         
         return True
@@ -270,6 +347,10 @@ class IterativeResearcher:
         {self.conversation.compile_conversation_history() or "No previous actions, findings or thoughts available."}        
         """
 
+        if self.logger:
+            self.logger.detail("Evaluating research gaps")
+            self.logger.detail(f"Input to Knowledge Gap Agent: {len(input_str)} characters")
+        
         result = await self._run_with_retry(
             Runner.run,
             knowledge_gap_agent,
@@ -277,15 +358,52 @@ class IterativeResearcher:
         )
         
         evaluation = result.final_output_as(KnowledgeGapOutput)
+        
+        # Ensure gap_priorities and previously_attempted are properly initialized
+        if not hasattr(evaluation, 'gap_priorities') or not evaluation.gap_priorities:
+            evaluation.gap_priorities = [1] * len(evaluation.outstanding_gaps) if hasattr(evaluation, 'outstanding_gaps') and evaluation.outstanding_gaps else []
+        
+        if not hasattr(evaluation, 'previously_attempted') or not evaluation.previously_attempted:
+            evaluation.previously_attempted = [False] * len(evaluation.outstanding_gaps) if hasattr(evaluation, 'outstanding_gaps') and evaluation.outstanding_gaps else []
 
-        if not evaluation.research_complete and evaluation.outstanding_gaps:
+        if (not evaluation.research_complete and 
+            hasattr(evaluation, 'outstanding_gaps') and 
+            evaluation.outstanding_gaps and 
+            len(evaluation.outstanding_gaps) > 0):
+            
             next_gap = evaluation.outstanding_gaps[0]
-            next_gap_priority = evaluation.gap_priorities[0] if evaluation.gap_priorities and len(evaluation.gap_priorities) > 0 else 1
-            next_gap_attempted = evaluation.previously_attempted[0] if evaluation.previously_attempted and len(evaluation.previously_attempted) > 0 else False
+            next_gap_priority = 1
+            next_gap_attempted = False
+            
+            if (hasattr(evaluation, 'gap_priorities') and 
+                evaluation.gap_priorities and 
+                len(evaluation.gap_priorities) > 0):
+                next_gap_priority = evaluation.gap_priorities[0]
+                
+            if (hasattr(evaluation, 'previously_attempted') and 
+                evaluation.previously_attempted and 
+                len(evaluation.previously_attempted) > 0):
+                next_gap_attempted = evaluation.previously_attempted[0]
             
             self.conversation.set_latest_gap(next_gap)
-            self._log_message(self.conversation.latest_task_string())
-            self._log_message(f"<gap_info>\nGap Priority: {next_gap_priority}/5 | Previously Attempted: {next_gap_attempted}\n</gap_info>")
+            
+            if self.logger:
+                self.logger.knowledge_gap(next_gap, next_gap_priority, next_gap_attempted)
+                # Log additional details about all outstanding gaps
+                self.logger.detail(f"Total outstanding gaps: {len(evaluation.outstanding_gaps)}")
+                for i, gap in enumerate(evaluation.outstanding_gaps):
+                    p = evaluation.gap_priorities[i] if i < len(evaluation.gap_priorities) else 1
+                    a = evaluation.previously_attempted[i] if i < len(evaluation.previously_attempted) else False
+                    self.logger.detail(f"Gap {i+1}: Priority {p}/5 | Previously Attempted: {a}")
+                    self.logger.detail(f"  {gap}")
+            else:
+                print(self.conversation.latest_task_string())
+                print(f"<gap_info>\nGap Priority: {next_gap_priority}/5 | Previously Attempted: {next_gap_attempted}\n</gap_info>")
+        
+        if self.logger:
+            self.logger.detail(f"Research complete: {evaluation.research_complete}")
+            if evaluation.research_complete:
+                self.logger.high_level("✓ Research evaluation complete - no more gaps identified")
         
         return evaluation
     
@@ -302,7 +420,7 @@ class IterativeResearcher:
         
         # Get the latest evaluation if available
         if hasattr(self, 'latest_evaluation') and self.latest_evaluation:
-            if hasattr(self.latest_evaluation, 'outstanding_gaps'):
+            if hasattr(self.latest_evaluation, 'outstanding_gaps') and self.latest_evaluation.outstanding_gaps:
                 # Find the gap index
                 if gap in self.latest_evaluation.outstanding_gaps:
                     gap_index = self.latest_evaluation.outstanding_gaps.index(gap)
@@ -336,6 +454,10 @@ class IterativeResearcher:
         {self.conversation.compile_conversation_history() or "No previous actions, findings or thoughts available."}
         """
         
+        if self.logger:
+            self.logger.detail("Selecting research agents")
+            self.logger.detail(f"Input to Tool Selector Agent: {len(input_str)} characters")
+        
         result = await self._run_with_retry(
             Runner.run,
             tool_selector_agent,
@@ -345,10 +467,17 @@ class IterativeResearcher:
         selection_plan = result.final_output_as(AgentSelectionPlan)
 
         # Add the tool calls to the conversation
-        self.conversation.set_latest_tool_calls([
+        tool_calls = [
             f"[Agent] {task.agent} [Query] {task.query} [Entity] {task.entity_website if task.entity_website else 'null'}" for task in selection_plan.tasks
-        ])
-        self._log_message(self.conversation.latest_action_string())
+        ]
+        self.conversation.set_latest_tool_calls(tool_calls)
+        
+        if self.logger:
+            self.logger.detail(f"Selected {len(selection_plan.tasks)} agents to address the gap")
+            for task in selection_plan.tasks:
+                self.logger.tool_execution(task.agent, task.query)
+        else:
+            print(self.conversation.latest_action_string())
         
         return selection_plan
     
@@ -367,13 +496,23 @@ class IterativeResearcher:
                 gap, agent_name, result = await future
                 results[f"{agent_name}_{gap}"] = result
                 num_completed += 1
-                self._log_message(f"<processing>\nTool execution progress: {num_completed}/{len(async_tasks)}\n</processing>")
+                if self.logger:
+                    self.logger.progress(f"Tool execution progress: {num_completed}/{len(async_tasks)}")
+                    result_length = len(result.output) if hasattr(result, 'output') else 0
+                    self.logger.tool_result(agent_name, result_length)
+                else:
+                    print(f"<processing>\nTool execution progress: {num_completed}/{len(async_tasks)}\n</processing>")
 
             # Add findings from the tool outputs to the conversation
             findings = []
             for tool_output in results.values():
                 findings.append(tool_output.output)
             self.conversation.set_latest_findings(findings)
+
+            if self.logger:
+                self.logger.detail(f"Collected {len(findings)} findings from tool executions")
+                for i, finding in enumerate(findings):
+                    self.logger.detail(f"Finding {i+1}: {len(finding)} characters")
 
             return results
     
@@ -383,6 +522,9 @@ class IterativeResearcher:
             agent_name = task.agent
             agent = TOOL_AGENTS.get(agent_name)
             if agent:
+                if self.logger:
+                    self.logger.detail(f"Running agent task: {agent_name} for gap '{task.gap}'")
+                    
                 result = await self._run_with_retry(
                     Runner.run,
                     agent,
@@ -391,15 +533,23 @@ class IterativeResearcher:
                 # Extract ToolAgentOutput from RunResult
                 output = result.final_output_as(ToolAgentOutput)
             else:
+                error_msg = f"No implementation found for agent {agent_name}"
+                if self.logger:
+                    self.logger.error(error_msg)
+                
                 output = ToolAgentOutput(
-                    output=f"No implementation found for agent {agent_name}",
+                    output=error_msg,
                     sources=[]
                 )
             
             return task.gap, agent_name, output
         except Exception as e:
+            error_msg = f"Error executing {task.agent} for gap '{task.gap}': {str(e)}"
+            if self.logger:
+                self.logger.error(error_msg)
+                
             error_output = ToolAgentOutput(
-                output=f"Error executing {task.agent} for gap '{task.gap}': {str(e)}",
+                output=error_msg,
                 sources=[]
             )
             return task.gap, task.agent, error_output
@@ -415,6 +565,11 @@ class IterativeResearcher:
         HISTORY OF ACTIONS, FINDINGS AND THOUGHTS:
         {self.conversation.compile_conversation_history() or "No previous actions, findings or thoughts available."}
         """
+        
+        if self.logger:
+            self.logger.detail("Generating observations")
+            self.logger.detail(f"Input to Thinking Agent: {len(input_str)} characters")
+        
         result = await self._run_with_retry(
             Runner.run,
             thinking_agent,
@@ -424,7 +579,12 @@ class IterativeResearcher:
         # Add the observations to the conversation
         observations = result.final_output
         self.conversation.set_latest_thought(observations)
-        self._log_message(self.conversation.latest_thought_string())
+        
+        if self.logger:
+            self.logger.detail(f"Generated observations: {len(observations)} characters")
+        else:
+            print(self.conversation.latest_thought_string())
+            
         return observations
 
     async def _create_final_report(
@@ -434,7 +594,10 @@ class IterativeResearcher:
             instructions: str = ""
         ) -> str:
         """Create the final response from the completed draft."""
-        self._log_message("=== Drafting Final Response ===")
+        if self.logger:
+            self.logger.section_break("Drafting Final Response")
+        else:
+            print("=== Drafting Final Response ===")
 
         length_str = f"* The full response should be approximately {length}.\n" if length else ""
         instructions_str = f"* {instructions}" if instructions else ""
@@ -451,17 +614,41 @@ class IterativeResearcher:
         {findings}
         """
 
+        if self.logger:
+            self.logger.detail("Creating final report")
+            self.logger.detail(f"Input to Writer Agent: {len(input_str)} characters")
+            
         result = await self._run_with_retry(
             Runner.run,
             writer_agent,
             input_str,
         )
         
-        self._log_message("Final response from IterativeResearcher created successfully")
+        if self.logger:
+            self.logger.high_level("Final report generated successfully")
+            self.logger.detail(f"Final report length: {len(result.final_output)} characters")
+        else:
+            print("Final response from IterativeResearcher created successfully")
         
         return result.final_output
     
     def _log_message(self, message: str) -> None:
-        """Log a message if verbose is True"""
-        if self.verbose:
+        """Legacy method for backward compatibility - use logger instead"""
+        if self.logger:
+            if "<task>" in message or "<gap_info>" in message:
+                # Knowledge gap information
+                self.logger.detail(f"Legacy log message: {message}")
+            elif "<action>" in message:
+                # Tool execution information
+                self.logger.detail(f"Legacy log message: {message}")
+            elif "<processing>" in message:
+                # Processing information
+                self.logger.detail(f"Legacy log message: {message}")
+            elif "===" in message:
+                # Section header
+                self.logger.detail(f"Legacy log message: {message}")
+            else:
+                # Other information
+                self.logger.detail(f"Legacy log message: {message}")
+        elif self.verbose:
             print(message)

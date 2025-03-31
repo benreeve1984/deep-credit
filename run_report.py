@@ -6,9 +6,9 @@ import asyncio
 import argparse
 from datetime import datetime
 from pathlib import Path
-import logging
 import sys
 from deep_researcher import DeepResearcher, IterativeResearcher
+from deep_researcher.logger import DeepCreditLogger
 
 # Configuration parameters
 CONFIG = {
@@ -46,40 +46,9 @@ The final report must include:
 Focus directly on analyzing {company_name} rather than explaining rating methodologies.''',
             
     # Output settings
-    "output_dir": "credit_ratings"  # Changed directory name
+    "output_dir": "credit_ratings",  # Changed directory name
+    "log_dir": "logs"  # Directory for detailed logs
 }
-
-class ConsoleHandler(logging.Handler):
-    """Custom logging handler that only writes to console."""
-    def __init__(self):
-        super().__init__()
-        self.console_handler = logging.StreamHandler(sys.stdout)
-        self.console_handler.setFormatter(logging.Formatter('%(message)s'))
-        self.api_call_count = 0
-
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            # Skip HTTP request logs
-            if "HTTP Request:" in msg:
-                self.api_call_count += 1
-                return
-            # Add API call summary at the end
-            if "Report saved to:" in msg:
-                msg += f"\n\nTotal API calls made: {self.api_call_count}"
-            self.console_handler.emit(record)
-        except Exception:
-            self.handleError(record)
-
-def setup_logging():
-    """Set up logging to write only to console."""
-    # Set up custom handler that writes only to console
-    handler = ConsoleHandler()
-    
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(handler)
 
 def save_report(report: str, output_path: Path):
     """Save the report to a file."""
@@ -91,26 +60,30 @@ def save_report(report: str, output_path: Path):
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(report)
 
-async def run_deep_research(query, max_iterations, max_time_minutes, verbose, tracing):
+async def run_deep_research(query, max_iterations, max_time_minutes, verbose, tracing, logger):
     """Run a deep credit rating report."""
     manager = DeepResearcher(
         max_iterations=max_iterations,
         max_time_minutes=max_time_minutes,
         verbose=verbose,
-        tracing=tracing
+        tracing=tracing,
+        logger=logger,
+        company_name=CONFIG['company_name']
     )
     
     report = await manager.run(query)
     return report
 
 async def run_iterative_research(query, max_iterations, max_time_minutes, verbose, tracing,
-                               output_length, output_instructions):
+                               output_length, output_instructions, logger):
     """Run an iterative credit rating report."""
     manager = IterativeResearcher(
         max_iterations=max_iterations,
         max_time_minutes=max_time_minutes,
         verbose=verbose,
-        tracing=tracing
+        tracing=tracing,
+        logger=logger,
+        company_name=CONFIG['company_name']
     )
     
     report = await manager.run(
@@ -146,6 +119,8 @@ def main():
                       help='Desired output length (for iterative mode)')
     parser.add_argument('--output-instructions', type=str, default=CONFIG['output_instructions'],
                       help='Additional output instructions (for iterative mode)')
+    parser.add_argument('--log-dir', type=str, default=CONFIG['log_dir'],
+                      help='Directory for detailed logs')
     
     args = parser.parse_args()
     
@@ -161,29 +136,40 @@ def main():
     company_snippet = sanitize_filename(CONFIG['company_name'][:50])
     filename = f"{timestamp}_{args.mode}_{company_snippet}_credit_rating.txt"
     
-    # Set up logging to console only
-    setup_logging()
+    # Set up logger
+    logger = DeepCreditLogger(
+        company_name=CONFIG['company_name'],
+        mode=args.mode,
+        log_dir=args.log_dir
+    )
     
-    # Log initial information to console
-    logging.info(f"Research Mode: {args.mode}")
-    logging.info(f"Company: {CONFIG['company_name']}")
-    logging.info(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logging.info("\n" + "="*50 + "\n")
+    # Log initial information
+    logger.section_break("Credit Rating Analysis")
+    logger.high_level(f"Company: {CONFIG['company_name']}")
+    logger.high_level(f"Research Mode: {args.mode}")
+    logger.high_level(f"Max time: {args.max_time} minutes | Max iterations: {max_iterations}")
+    logger.high_level(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    logging.info(f"\nRunning {args.mode} credit rating analysis...")
-    logging.info(f"Company: {CONFIG['company_name']}")
-    logging.info(f"Max time: {args.max_time} minutes")
-    logging.info(f"Max iterations: {max_iterations}")
+    # Log detailed configuration
+    logger.detail(f"Full Query: {query}")
+    logger.detail(f"Output Length: {args.output_length}")
+    logger.detail(f"Output Instructions: {args.output_instructions}")
+    logger.detail(f"Log directory: {args.log_dir}")
+    logger.detail(f"Verbose: {args.verbose} | Tracing: {args.tracing}")
     
+    # Run the appropriate research method
     if args.mode == 'deep':
+        logger.section_break("Starting Deep Research")
         report = asyncio.run(run_deep_research(
             query,
             max_iterations,
             args.max_time,
             args.verbose,
-            args.tracing
+            args.tracing,
+            logger
         ))
     else:
+        logger.section_break("Starting Iterative Research")
         report = asyncio.run(run_iterative_research(
             query,
             max_iterations,
@@ -191,15 +177,17 @@ def main():
             args.verbose,
             args.tracing,
             args.output_length,
-            args.output_instructions
+            args.output_instructions,
+            logger
         ))
     
     # Save report to file
     output_path = Path(__file__).parent / CONFIG['output_dir'] / filename
     save_report(report, output_path)
     
-    # Log completion to console
-    logging.info(f"\nReport saved to: {output_path}")
-
+    # Log completion info
+    logger.report_saved(output_path)
+    logger.high_level(f"Detailed log saved to: {logger.get_log_file_path()}")
+    
 if __name__ == "__main__":
     main() 

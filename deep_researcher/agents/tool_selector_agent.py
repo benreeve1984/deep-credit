@@ -78,6 +78,14 @@ Your task is to decide:
 2. What specific queries should be given to the agents
 3. How to adapt your approach based on priority and previous attempts
 
+ADAPTIVE STRATEGY (VERY IMPORTANT):
+When a gap has been previously attempted (PREVIOUSLY_ATTEMPTED: true), you MUST use a different approach than before:
+- Use broader search terms or alternative terminology
+- Look for industry benchmarks instead of company-specific metrics
+- Search for analyst opinions or estimates when hard data is unavailable
+- Consider qualitative assessments instead of just quantitative data
+- Try different agent combinations with new query formulations
+
 Available specialized agents:
 - WebSearchAgent: General web search for broad topics (can be called multiple times with different queries)
 - SiteCrawlerAgent: Crawl the pages of a specific website to retrieve information about it - use this if you want to find out something about a particular company, entity or product
